@@ -660,6 +660,212 @@ module Parquet {
     }
   }
 
+  /*
+     Writes the local chunk of a numeric list (segarray) column for a single
+     locale. `segments` gives the starting index into the values array for each
+     list; `extraOffset` is the total number of values and is used to compute
+     the length of the final list on the locale.
+  */
+  private proc writeListColumnComponent(filename: string, dsetname: string,
+                                        const ref distVals: [] ?t, valIdxRange,
+                                        const ref segments: [] int, locDom,
+                                        extraOffset, c_dtype, compression)
+                                        throws {
+    extern proc c_writeListColumnToParquet(filename, arr_chpl, offsets_chpl,
+                                           dsetname, numelems, rowGroupSize,
+                                           dtype, compression, errMsg): int;
+
+    var localVals: [valIdxRange] t = distVals[valIdxRange];
+    var locOffsets: [0..#locDom.size+1] int;
+    locOffsets[0..#locDom.size] = segments[locDom];
+    if locDom.high == segments.domain.high then
+      locOffsets[locOffsets.domain.high] = extraOffset;
+    else
+      locOffsets[locOffsets.domain.high] = segments[locDom.high+1];
+
+    var valPtr: c_ptr(void) = nil;
+    if localVals.size != 0 then
+      valPtr = c_ptrTo(localVals);
+
+    var call = new parquetCall(getL(), getR(), getM());
+    manage call {
+      call.retVal = c_writeListColumnToParquet(filename.localize().c_str(),
+                                               c_ptrTo(locOffsets),
+                                               valPtr,
+                                               dsetname.localize().c_str(),
+                                               locOffsets.size-1,
+                                               ROWGROUPS,
+                                               c_dtype,
+                                               compression,
+                                               call.errMsg);
+    }
+    if call.err then throw call.err;
+  }
+
+  /*
+     Writes a numeric list (segarray) column to Parquet. `segments` is a
+     distributed array where each entry is the starting index into `values` of
+     the corresponding list; `values` holds the concatenated list elements.
+     One file is written per target locale, matching the layout used by
+     `write1DDistArrayParquet`. Returns whether existing files were overwritten.
+  */
+  proc writeListColumn(filename: string, colName: string,
+                       const ref segments: [] int, const ref values: [] ?t,
+                       compression=CompressionType.NONE) throws {
+    const c_dtype = chplTypeToCType(t);
+    const comp = compression: int;
+
+    var (prefix, extension) = getFileMetadata(filename);
+    var filenames = generateFilenames(prefix, extension,
+                                      segments.targetLocales().size);
+    var matchingFilenames = getMatchingFilenames(prefix, extension);
+    var filesExist = processParquetFilenames(filenames, matchingFilenames,
+                                             TRUNCATE);
+
+    const extraOffset = values.size;
+    const lastOffset = if segments.size == 0 then 0
+                                             else segments[segments.domain.high];
+    const lastValIdx = values.domain.high;
+
+    coforall (loc, idx) in zip(segments.targetLocales(), filenames.domain)
+        do on loc {
+      const myFilename = filenames[idx];
+      const locDom = segments.localSubdomain();
+
+      if locDom.isEmpty() || locDom.size <= 0 {
+        createEmptyListParquetFile(myFilename, colName, c_dtype, comp);
+      } else {
+        var localSegments = segments[locDom];
+        var startValIdx = localSegments[locDom.low];
+        var endValIdx = if lastOffset == localSegments[locDom.high]
+                          then lastValIdx
+                          else segments[locDom.high + 1] - 1;
+        var valIdxRange = startValIdx..endValIdx;
+        writeListColumnComponent(myFilename, colName, values, valIdxRange,
+                                 segments, locDom, extraOffset, c_dtype, comp);
+      }
+    }
+    return filesExist;
+  }
+
+  /*
+     Writes a list-of-strings (segarray of strings) column to Parquet.
+     `segments` indexes into `offsets` (one entry per list), `offsets` indexes
+     into `values` (one entry per string), and `values` holds the raw string
+     bytes. One file is written per target locale. Returns whether existing
+     files were overwritten.
+  */
+  proc writeStrListColumn(filename: string, colName: string,
+                          const ref segments: [] int,
+                          const ref offsets: [] int,
+                          const ref values: [] uint(8),
+                          compression=CompressionType.NONE) throws {
+    extern proc c_writeStrListColumnToParquet(filename, segs_chpl, offsets_chpl,
+                                              arr_chpl, dsetname, numelems,
+                                              rowGroupSize, dtype, compression,
+                                              errMsg): int;
+
+    const comp = compression: int;
+    const dtypeRep = ARROWSTRING;
+
+    var (prefix, extension) = getFileMetadata(filename);
+    var filenames = generateFilenames(prefix, extension,
+                                      segments.targetLocales().size);
+    var matchingFilenames = getMatchingFilenames(prefix, extension);
+    var filesExist = processParquetFilenames(filenames, matchingFilenames,
+                                             TRUNCATE);
+
+    // segment refers to segarray offsets; offset refers to string byte offsets
+    const extraSegment = offsets.size;
+    const extraOffset = values.size;
+    const lastOffset = if segments.size == 0 then 0
+                                             else segments[segments.domain.high];
+    const lastOffsetIdx = offsets.domain.high;
+    const lastValIdx = values.domain.high;
+
+    coforall (loc, idx) in zip(segments.targetLocales(), filenames.domain)
+        do on loc {
+      const myFilename = filenames[idx];
+      const locDom = segments.localSubdomain();
+
+      if locDom.isEmpty() || locDom.size <= 0 {
+        createEmptyListParquetFile(myFilename, colName, ARROWSTRING, comp);
+      } else {
+        var localSegments = segments[locDom];
+        var locSegments: [0..#locDom.size+1] int;
+        locSegments[0..#locDom.size] = segments[locDom];
+        if locDom.high == segments.domain.high then
+          locSegments[locSegments.domain.high] = extraSegment;
+        else
+          locSegments[locSegments.domain.high] = segments[locDom.high+1];
+
+        var startOffsetIdx = localSegments[locDom.low];
+        var endOffsetIdx = if lastOffset == localSegments[locDom.high]
+                             then lastOffsetIdx
+                             else segments[locDom.high + 1] - 1;
+        var offIdxRange = startOffsetIdx..endOffsetIdx;
+
+        var valPtr: c_ptr(void) = nil;
+        var offPtr: c_ptr(void) = nil;
+
+        if offIdxRange.size > 0 {
+          var startValIdx = offsets[offIdxRange.low];
+          var endValIdx = if lastOffsetIdx == offIdxRange.high
+                            then lastValIdx
+                            else offsets[offIdxRange.high + 1] - 1;
+          var valIdxRange = startValIdx..endValIdx;
+          var localVals: [valIdxRange] uint(8) = values[valIdxRange];
+
+          var locOffsets: [0..#offIdxRange.size+1] int;
+          locOffsets[0..#offIdxRange.size] = offsets[offIdxRange];
+          if offIdxRange.high == offsets.domain.high then
+            locOffsets[locOffsets.domain.high] = extraOffset;
+          else
+            locOffsets[locOffsets.domain.high] = offsets[offIdxRange.high+1];
+
+          if localVals.size > 0 then valPtr = c_ptrTo(localVals);
+          if locOffsets.size > 0 then offPtr = c_ptrTo(locOffsets);
+
+          // The C call must stay inside this block so localVals/locOffsets
+          // remain in scope for the duration of the call.
+          var call = new parquetCall(getL(), getR(), getM());
+          manage call {
+            call.retVal =
+                c_writeStrListColumnToParquet(myFilename.localize().c_str(),
+                                              c_ptrTo(locSegments),
+                                              offPtr,
+                                              valPtr,
+                                              colName.localize().c_str(),
+                                              locSegments.size-1,
+                                              ROWGROUPS,
+                                              dtypeRep,
+                                              comp,
+                                              call.errMsg);
+          }
+          if call.err then throw call.err;
+        } else {
+          // empty segment case: no values on this locale
+          var call = new parquetCall(getL(), getR(), getM());
+          manage call {
+            call.retVal =
+                c_writeStrListColumnToParquet(myFilename.localize().c_str(),
+                                              c_ptrTo(locSegments),
+                                              offPtr,
+                                              valPtr,
+                                              colName.localize().c_str(),
+                                              locSegments.size-1,
+                                              ROWGROUPS,
+                                              dtypeRep,
+                                              comp,
+                                              call.errMsg);
+          }
+          if call.err then throw call.err;
+        }
+      }
+    }
+    return filesExist;
+  }
+
   proc getNumCols(filename: string) throws {
     extern proc c_getNumCols(filename, errMsg): int(64);
 
