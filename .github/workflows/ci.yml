@@ -57,7 +57,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: [latest]
+        version: [2.8.0, latest]
     runs-on: ubuntu-latest
     container:
       image: chapel/chapel:${{ matrix.version }}
