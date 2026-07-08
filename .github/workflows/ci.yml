@@ -13,6 +13,10 @@ concurrency:
 
 jobs:
   tests:
+    # currently skipping these tests, since the binary arrow installed is too
+    # new (24) for this package and we can't use it. once the package supports
+    # a newer version of arrow, we can re-enable these tests.
+    if: false
     strategy:
       fail-fast: false
       matrix:
@@ -29,8 +33,7 @@ jobs:
           wget https://packages.apache.org/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
           apt install -y -V ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
 
-
-          # this should be all thats required, but older versions of ubuntu don't
+          # this should be all thats required, but some OSes don't
           # have these by default, hence the above steps
           apt-get update
           apt-get install -y libarrow-dev libparquet-dev
