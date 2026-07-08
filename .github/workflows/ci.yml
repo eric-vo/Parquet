@@ -27,16 +27,16 @@ jobs:
           NUM_CORES=$(nproc) ./build_arrow.sh
       - name: Check the project builds
         run: |
-          source arrow.sh
+          . ./arrow.sh
           mason build
       - name: Check the examples build and run
         run: |
-          source arrow.sh
+          . ./arrow.sh
           mason build --example
           for example in $(ls example/*.chpl); do
             mason run --example $(basename $example);
           done
       - name: Run mason tests
         run: |
-          source arrow.sh
+          . ./arrow.sh
           mason test --show --parallel

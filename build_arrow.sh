@@ -72,5 +72,5 @@ echo "  export PKG_CONFIG_PATH=$ARROW_INSTALL_DIR/lib/pkgconfig:\$PKG_CONFIG_PAT
 echo ""
 echo "OR"
 echo ""
-echo "  source arrow.sh"
+echo "  . ./arrow.sh"
 echo ""
