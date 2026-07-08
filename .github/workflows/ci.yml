@@ -24,6 +24,32 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install arrow/parquet dependencies
         run: |
+          apt-get update
+          apt-get install -y libarrow-dev libparquet-dev
+      - name: Check the project builds
+        run: |
+          mason build
+      - name: Check the examples build and run
+        run: |
+          mason build --example
+          for example in $(ls example/*.chpl); do
+            mason run --example $(basename $example);
+          done
+      - name: Run mason tests
+        run: |
+          mason test --show --parallel
+  tests-from-source:
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [latest]
+    runs-on: ubuntu-latest
+    container:
+      image: chapel/chapel:${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build arrow/parquet dependencies
+        run: |
           NUM_CORES=$(nproc) ./build_arrow.sh
       - name: Check the project builds
         run: |
