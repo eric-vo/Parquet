@@ -2,3 +2,5 @@ target/
 Mason.lock
 doc/
 *.o
+deps
+arrow.sh

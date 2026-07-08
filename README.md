@@ -20,12 +20,27 @@ both local and distributed (Block-distributed) arrays.
 - Chapel 2.8.0 or later
 - Apache Arrow and Parquet C++ libraries (19.0.1 or compatible)
 
-The C++ prerequisite libraries are resolved automatically through one of the
-following (checked in order):
+The C++ prerequisite libraries must be instaled and findable by `pkg-config`. The packages are typically named `arrow` and `parquet`. On Ubuntu, you can install them with:
 
-1. The `ARROW_DIR` environment variable
-2. `pkg-config`
-3. [Spack](https://spack.io/)
+```bash
+sudo apt-get install libarrow-dev libparquet-dev
+```
+
+On MacOS, you can install them with Homebrew:
+
+```bash
+brew install apache-arrow
+```
+
+See https://arrow.apache.org/install/ for more options and details.
+
+If you do not install the libraries through a package manager (like above or with something like `spack`), you will need to set the `PKG_CONFIG_PATH` environment variable to point to the directory containing the `.pc` files for Arrow and Parquet. For example:
+
+```bash
+export PKG_CONFIG_PATH=/path/to/arrow/lib/pkgconfig:/path/to/parquet/lib/pkgconfig:$PKG_CONFIG_PATH
+```
+
+This will allow `pkg-config` (and by extension, `mason`) to find the libraries and their headers.
 
 ## Installation
 

@@ -21,31 +21,14 @@ CXXFLAGS=-I$(INCDIR) -std=c++17
 # Override at invocation time if needed (e.g., PIC_CXXFLAGS="").
 PIC_CXXFLAGS ?= -fPIC
 
-# --- Arrow/Parquet dependency resolution ---
-# Priority: 1) ARROW_DIR env var, 2) pkg-config, 3) spack
-# Helper: detect lib64 vs lib for a given prefix (returns empty if neither has Arrow libs)
-_has_arrow_libs = $(or $(wildcard $(1)/libarrow.so*),$(wildcard $(1)/libarrow.dylib*),$(wildcard $(1)/libarrow.a))
-_arrow_libdir = $(if $(call _has_arrow_libs,$(1)/lib64),$(1)/lib64,$(if $(call _has_arrow_libs,$(1)/lib),$(1)/lib,))
-
-ifdef ARROW_DIR
-  ARROW_LIBDIR := $(call _arrow_libdir,$(ARROW_DIR))
-  ARROW_CFLAGS := -I$(ARROW_DIR)/include
-  ARROW_LDFLAGS := -L$(ARROW_LIBDIR) -larrow -lparquet
-else ifneq ($(shell pkg-config --exists arrow parquet 2>/dev/null && echo yes),)
+ifneq ($(shell pkg-config --exists arrow parquet 2>/dev/null && echo yes),)
   ARROW_CFLAGS := $(shell pkg-config --cflags arrow parquet)
   ARROW_LDFLAGS := $(shell pkg-config --libs arrow parquet)
   ARROW_LIBDIR := $(shell pkg-config --variable=libdir arrow)
-else ifneq ($(shell command -v spack 2>/dev/null),)
-  _SPACK_ARROW_PREFIX := $(shell spack find --limit=1 --format="{prefix}" arrow 2>/dev/null)
-  ifneq ($(_SPACK_ARROW_PREFIX),)
-    ARROW_LIBDIR := $(call _arrow_libdir,$(_SPACK_ARROW_PREFIX))
-    ARROW_CFLAGS := -I$(_SPACK_ARROW_PREFIX)/include
-    ARROW_LDFLAGS := -L$(ARROW_LIBDIR) -larrow -lparquet
-  endif
 endif
 
 ifeq ($(ARROW_CFLAGS),)
-  $(error Could not find Arrow/Parquet. Set ARROW_DIR, install pkg-config files, or use spack.)
+  $(error Could not find Arrow/Parquet. Make sure Arrow/Parquet and pkg-config are installed and that pkg-config can find them.)
 endif
 
 ifeq ($(ARROW_LIBDIR),)

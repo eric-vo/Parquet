@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  tests:
+    # currently skipping these tests, since the binary arrow installed is too
+    # new (24) for this package and we can't use it. once the package supports
+    # a newer version of arrow, we can re-enable these tests.
+    if: false
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [2.8.0, 2.9.0, latest]
+    runs-on: ubuntu-latest
+    container:
+      image: chapel/chapel:${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install arrow/parquet dependencies
+        run: |
+          apt update
+          apt install -y -V ca-certificates lsb-release wget
+          wget https://packages.apache.org/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
+          apt install -y -V ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb
+
+          # this should be all thats required, but some OSes don't
+          # have these by default, hence the above steps
+          apt-get update
+          apt-get install -y libarrow-dev libparquet-dev
+      - name: Check the project builds
+        run: |
+          mason build
+      - name: Check the examples build and run
+        run: |
+          if ls example/*.chpl >/dev/null 2>&1; then
+            mason build --example
+            for example in example/*.chpl; do
+              mason run --example $(basename $example);
+            done
+          else
+            echo "No examples found, skipping."
+          fi
+      - name: Run mason tests
+        run: |
+          mason test --show --parallel
+  tests-from-source:
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [2.8.0, latest]
+    runs-on: ubuntu-latest
+    container:
+      image: chapel/chapel:${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build arrow/parquet dependencies
+        run: |
+          NUM_CORES=$(nproc) ./build_arrow.sh
+      - name: Check the project builds
+        run: |
+          . ./arrow.sh
+          mason build
+      - name: Check the examples build and run
+        run: |
+          . ./arrow.sh
+          if ls example/*.chpl >/dev/null 2>&1; then
+            mason build --example
+            for example in example/*.chpl; do
+              mason run --example $(basename $example);
+            done
+          else
+            echo "No examples found, skipping."
+          fi
+      - name: Run mason tests
+        run: |
+          . ./arrow.sh
+          mason test --show --parallel
