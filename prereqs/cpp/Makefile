@@ -16,7 +16,7 @@ CXX_HEADERS = $(wildcard $(INCDIR)/*.h)
 CXX_SOURCES = $(wildcard $(SRCDIR)/*.cpp)
 CXX_OBJECTS = $(patsubst $(SRCDIR)/%.cpp,$(OBJDIR)/%.o,$(CXX_SOURCES))
 
-CXXFLAGS=-I$(INCDIR) -std=c++17
+CXXFLAGS=-I$(INCDIR) -std=c++20
 # Build prereq objects as PIC so they can be linked into PIE executables.
 # Override at invocation time if needed (e.g., PIC_CXXFLAGS="").
 PIC_CXXFLAGS ?= -fPIC
