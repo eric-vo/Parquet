@@ -13,10 +13,6 @@ concurrency:
 
 jobs:
   tests:
-    # currently skipping these tests, since the binary arrow installed is too
-    # new (24) for this package and we can't use it. once the package supports
-    # a newer version of arrow, we can re-enable these tests.
-    if: false
     strategy:
       fail-fast: false
       matrix:
