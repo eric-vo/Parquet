@@ -23,7 +23,7 @@
       *errMsg = strdup(result.status().message().c_str());      \
       return ARROWERROR;                                        \
     }                                                           \
-    res = result.ValueOrDie();                                  \
+    res = std::move(result.ValueOrDie());                                  \
   }
 
   // The `ARROWSTATUS_OK` macro should be used when calling an
@@ -61,7 +61,11 @@ int64_t cpp_getNumRows(const char* filename, char** errMsg) {
                    infile);
 
     std::unique_ptr<parquet::arrow::FileReader> reader;
+#if ARROW_VERSION_MAJOR < 19
     ARROWSTATUS_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool(), &reader));
+#else
+    ARROWRESULT_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool()), reader);
+#endif
   
     return reader -> parquet_reader() -> metadata() -> num_rows();
   } catch (const std::exception& e) {
@@ -80,9 +84,11 @@ static int getSchema(const char* filename,
                                                infile);
 
   std::unique_ptr<parquet::arrow::FileReader> reader;
-  ARROWSTATUS_OK(parquet::arrow::OpenFile(infile,
-                                          arrow::default_memory_pool(),
-                                          &reader));
+#if ARROW_VERSION_MAJOR < 19
+    ARROWSTATUS_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool(), &reader));
+#else
+    ARROWRESULT_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool()), reader);
+#endif
   ARROWSTATUS_OK(reader->GetSchema(out));
 
   return 0;
@@ -105,7 +111,11 @@ int cpp_getPrecision(const char* filename, const char* colname, char** errMsg) {
                    infile);
 
     std::unique_ptr<parquet::arrow::FileReader> reader;
+#if ARROW_VERSION_MAJOR < 19
     ARROWSTATUS_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool(), &reader));
+#else
+    ARROWRESULT_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool()), reader);
+#endif
 
     std::shared_ptr<arrow::Schema> sc;
     std::shared_ptr<arrow::Schema>* out = &sc;
@@ -191,7 +201,11 @@ int cpp_getType(const char* filename, const char* colname, char** errMsg) {
                    infile);
 
     std::unique_ptr<parquet::arrow::FileReader> reader;
+#if ARROW_VERSION_MAJOR < 19
     ARROWSTATUS_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool(), &reader));
+#else
+    ARROWRESULT_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool()), reader);
+#endif
 
     std::shared_ptr<arrow::Schema> sc;
     std::shared_ptr<arrow::Schema>* out = &sc;
@@ -254,7 +268,11 @@ int cpp_getListType(const char* filename, const char* colname, char** errMsg) {
                    infile);
 
     std::unique_ptr<parquet::arrow::FileReader> reader;
+#if ARROW_VERSION_MAJOR < 19
     ARROWSTATUS_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool(), &reader));
+#else
+    ARROWRESULT_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool()), reader);
+#endif
 
     std::shared_ptr<arrow::Schema> sc;
     std::shared_ptr<arrow::Schema>* out = &sc;
@@ -551,13 +569,22 @@ int cpp_appendColumnToParquet(const char* filename, void* chpl_arr,
     ARROWRESULT_OK(arrow::io::ReadableFile::Open(filename, arrow::default_memory_pool()),
                    infile);
     std::unique_ptr<parquet::arrow::FileReader> reader;
+#if ARROW_VERSION_MAJOR < 19
     ARROWSTATUS_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool(), &reader));
+#else
+    ARROWRESULT_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool()), reader);
+#endif
     // Use threads for case when reading a table with many columns
     reader->set_use_threads(true);
 
+#if ARROW_VERSION_MAJOR < 24
     std::shared_ptr<arrow::Table> table;
     std::shared_ptr<arrow::Table>* hold_table = &table;
     ARROWSTATUS_OK(reader->ReadTable(hold_table));
+#else
+    std::shared_ptr<arrow::Table> table;
+    ARROWRESULT_OK(reader->ReadTable(), table);
+#endif
 
     arrow::ArrayVector arrays;
     std::shared_ptr<arrow::Array> values;
@@ -645,7 +672,11 @@ int cpp_getDatasetNames(const char* filename, char** dsetResult, bool readNested
     ARROWRESULT_OK(arrow::io::ReadableFile::Open(filename, arrow::default_memory_pool()),
                    infile);
     std::unique_ptr<parquet::arrow::FileReader> reader;
+#if ARROW_VERSION_MAJOR < 19
     ARROWSTATUS_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool(), &reader));
+#else
+    ARROWRESULT_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool()), reader);
+#endif
 
     std::shared_ptr<arrow::Schema> sc;
     std::shared_ptr<arrow::Schema>* out = &sc;
