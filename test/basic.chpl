@@ -65,9 +65,94 @@ proc testMultiColWriteRead(test: borrowed Test) throws {
   }
 }
 
+// Multi-column single-file write mixing a flat pdarray column with a numeric
+// SegArray (list) column, then reading both back. Exercises the SEGARRAY path
+// of pqWriteOp/registerSegArrayColumn added for mixed/complex-type writes.
+proc testMultiColWithSegArray(test: borrowed Test) throws {
+  // flat column
+  var flat = blockDist.createArray(0..#3, int);
+  flat = [10, 20, 30];
+
+  // segarray column: [[0, 1, 2], [3], [4, 5]]
+  var segments = blockDist.createArray(0..#3, int);
+  var values = blockDist.createArray(0..#6, int);
+  segments = [0, 3, 4];
+  values = [0, 1, 2, 3, 4, 5];
+
+  manage new tempDir() as temp {
+    const filePath = Path.joinPath(temp.path, "multiseg.parquet");
+
+    var op = new pqWriteOp(filePath, flat.domain);
+    op.registerColumn(flat, "flat");
+    op.registerSegArrayColumn(segments, values, "lists");
+    op.write();
+
+    test.assertTrue(FS.isFile(filePath));
+    test.assertEqual(getNumCols(filePath), 2);
+    test.assertEqual(getArrType(filePath, "flat"), ArrowTypes.int64);
+    test.assertEqual(getArrType(filePath, "lists"), ArrowTypes.list);
+    test.assertEqual(getListData(filePath, "lists"), ArrowTypes.int64);
+
+    // flat column round-trips
+    var flatIn: [0..#3] int;
+    readColumn(filePath, "flat", flatIn);
+    for i in 0..#3 do test.assertEqual(flatIn[i], flat[i]);
+
+    // list column structure
+    var segSizes: [0..#3] int;
+    const total = getListColSize(filePath, "lists", segSizes);
+    test.assertEqual(total, 6);
+    test.assertEqual(segSizes[0], 3);
+    test.assertEqual(segSizes[1], 1);
+    test.assertEqual(segSizes[2], 2);
+
+    // list column values round-trip
+    var vals: [0..#6] int;
+    var rowsPerFile = [3];
+    var rSeg: [0..#3] int;
+    var rOff: [0..#3] int;
+    readListFilesByName(vals, rowsPerFile, rSeg, rOff, [filePath], [6],
+                        "lists", ArrowTypes.int64);
+    for i in 0..#6 do test.assertEqual(vals[i], values[i]);
+  }
+}
+
+// Numeric SegArray column containing empty lists, mixed with a flat column, in
+// a single multi-column file: [[], [0, 1], [], [3, 4, 5, 6], []]
+proc testMultiColSegArrayEmptySegments(test: borrowed Test) throws {
+  var flat = blockDist.createArray(0..#5, real);
+  flat = [1.0, 2.0, 3.0, 4.0, 5.0];
+
+  var segments = blockDist.createArray(0..#5, int);
+  var values = blockDist.createArray(0..#6, int);
+  segments = [0, 0, 2, 2, 6];
+  values = [0, 1, 3, 4, 5, 6];
+
+  manage new tempDir() as temp {
+    const filePath = Path.joinPath(temp.path, "multiseg_empty.parquet");
+
+    var op = new pqWriteOp(filePath, flat.domain);
+    op.registerSegArrayColumn(segments, values, "lists");
+    op.registerColumn(flat, "flat");
+    op.write();
+
+    test.assertEqual(getNumCols(filePath), 2);
+    test.assertEqual(getArrType(filePath, "lists"), ArrowTypes.list);
+
+    var segSizes: [0..#5] int;
+    const total = getListColSize(filePath, "lists", segSizes);
+    test.assertEqual(total, 6);
+    const expected = [0, 2, 0, 4, 0];
+    for i in 0..#5 do test.assertEqual(segSizes[i], expected[i]);
+
+    var flatIn: [0..#5] real;
+    readColumn(filePath, "flat", flatIn);
+    for i in 0..#5 do test.assertEqual(flatIn[i], flat[i]);
+  }
+}
+
 proc testDistributedWriteRead(test: borrowed Test) throws {
   var ArrOut, ArrIn = blockDist.createArray(1..n, int);
-
   ArrOut = 2;
 
   manage new tempDir() as temp {

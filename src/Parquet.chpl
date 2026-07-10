@@ -35,6 +35,15 @@ module Parquet {
   extern const ARROWDECIMAL: c_int;
   extern const ARROWERROR: c_int;
 
+  // Object-type codes shared with the C++ backend (see SharedEnums / the
+  // #define values in the Parquet C++ headers). These select how a column is
+  // laid out in the Parquet schema: PDARRAY writes a flat primitive column,
+  // while SEGARRAY writes a nested Arrow LIST column.
+  const ARRAYVIEW_OBJ: int = 0;
+  const PDARRAY_OBJ: int = 1;
+  const STRINGS_OBJ: int = 2;
+  const SEGARRAY_OBJ: int = 3;
+
   class FileWriter {
     var _wrapper : c_ptr(void);
 
@@ -718,8 +727,23 @@ module Parquet {
   record pqWriteLocalChunkInfo {
     var c_colName: c_ptrConst(c_char);
     var c_data: c_ptrConst(void);
+    var c_offsets: c_ptrConst(void);
     var c_type: int;
+    var objType: int;
     var size: int;
+    var numValues: int;
+  }
+
+  /*
+     Backing store for a single locale's zero-based segment offsets of a
+     SegArray column registered with `pqWriteOp`. The offsets must outlive the
+     `registerSegArrayColumn` call (they are handed to the C++ writer as a raw
+     pointer at `write()` time), so they are kept alive in a per-locale list on
+     the owning `pqWriteOp`.
+  */
+  class segOffsetBuffer {
+    var d: domain(1);
+    var data: [d] int;
   }
 
   record pqWriteOp {
@@ -731,6 +755,11 @@ module Parquet {
     var info = blockDist.createArray(sharedDom.targetLocales().domain,
                                      list(pqWriteLocalChunkInfo),
                                      targetLocales=sharedDom.targetLocales());
+
+    // per locale store keeping SegArray offset buffers alive until write()
+    var segBuffers = blockDist.createArray(sharedDom.targetLocales().domain,
+                                           list(shared segOffsetBuffer),
+                                           targetLocales=sharedDom.targetLocales());
 
     var colCount: int;
 
@@ -746,8 +775,65 @@ module Parquet {
           localInfo.pushBack(
               new pqWriteLocalChunkInfo(colName.localize().c_str(),
                                         ptr,
+                                        nil,
                                         chplTypeToCType(eltType),
+                                        PDARRAY_OBJ,
+                                        localSubDom.size,
                                         localSubDom.size));
+        }
+      }
+
+      colCount += 1;
+    }
+
+    /*
+       Register a numeric SegArray (list) column to be written alongside flat
+       columns into the same Parquet file. `segments` holds one starting index
+       per list into `values`, and `values` holds the concatenated list
+       elements. The list column is written as a nested Arrow LIST column,
+       matching the layout produced by `writeListColumn` and the Arkouda
+       multi-column writer. Supported value types are int(64), uint(64), real,
+       and bool; string SegArrays are handled by `writeStrListColumn`.
+    */
+    proc ref registerSegArrayColumn(const segments: [] int,
+                                    const values: [] ?eltType,
+                                    colName: string) {
+      if eltType == string then
+        compilerError("String SegArray columns are not supported by " +
+                      "registerSegArrayColumn; use writeStrListColumn instead.");
+
+      const c_dtype = chplTypeToCType(eltType);
+
+      coforall (loc, localInfo, localBufs) in
+          zip(sharedDom.targetLocales(), info, segBuffers) {
+        on loc {
+          const ref segDom = segments.localSubdomain();
+          const ref valDom = values.localSubdomain();
+
+          // Rebase this locale's segment offsets so they index from 0 into the
+          // locale-local slice of `values`.
+          const startVal = if segDom.size > 0 then segments[segDom.low] else 0;
+          var buf = new shared segOffsetBuffer({0..#segDom.size});
+          for j in 0..#segDom.size do
+            buf.data[j] = segments[segDom.low + j] - startVal;
+          localBufs.pushBack(buf);
+
+          var segPtr: c_ptrConst(void) = nil;
+          if segDom.size > 0 then
+            segPtr = c_ptrToConst(buf.data[0]): c_ptrConst(void);
+
+          var valPtr: c_ptrConst(void) = nil;
+          if valDom.size > 0 then
+            valPtr = c_pointer_return_const(values[valDom.first]): c_ptrConst(void);
+
+          localInfo.pushBack(
+              new pqWriteLocalChunkInfo(colName.localize().c_str(),
+                                        valPtr,
+                                        segPtr,
+                                        c_dtype,
+                                        SEGARRAY_OBJ,
+                                        segDom.size,
+                                        valDom.size));
         }
       }
 
@@ -770,16 +856,21 @@ module Parquet {
 
           var c_colNames: [colDom] c_ptrConst(c_char);
           var c_datas: [colDom] c_ptrConst(void);
+          var c_offsets: [colDom] c_ptrConst(void);
           var c_types: [colDom] int;
-          var c_objTypes: [colDom] int = 1;
+          var c_objTypes: [colDom] int;
+          var c_numValues: [colDom] int;
           var sizes: [colDom] int;
 
-          for (colInfo,   c_colName,  c_data,  c_type,  size) in
-           zip(localInfo, c_colNames, c_datas, c_types, sizes) {
+          for (colInfo,   c_colName,  c_data,  c_offset,  c_type,  c_objType,  c_numValue,  size) in
+           zip(localInfo, c_colNames, c_datas, c_offsets, c_types, c_objTypes, c_numValues, sizes) {
 
              c_colName = colInfo.c_colName;
              c_data = colInfo.c_data;
+             c_offset = colInfo.c_offsets;
              c_type = colInfo.c_type;
+             c_objType = colInfo.objType;
+             c_numValue = colInfo.numValues;
              size = colInfo.size;
           }
 
@@ -798,15 +889,43 @@ module Parquet {
 
           var numLeft = sizes[0];
 
-          // TODO:
-          // - implement other data types
-          // - implement SEGARRAY?
           for i in 0..#numLeft by ROWGROUPS {
             const batchSize = min(numLeft-i, ROWGROUPS);
 
             var rg_writer = writer.AppendRowGroup();
-            for (data, kind) in zip(c_datas, c_types) {
-              if kind == ARROWINT64 || kind == ARROWUINT64 ||
+            for (data, offset, kind, objType, numVals, colRows) in
+                zip(c_datas, c_offsets, c_types, c_objTypes, c_numValues,
+                    sizes) {
+              if objType == SEGARRAY_OBJ {
+                // Nested LIST column: write one list (segment) at a time using
+                // Arrow definition/repetition levels. def_lvl=3 marks a defined
+                // item; rep_lvl=0 starts a new list and rep_lvl=1 continues it.
+                // Empty lists are written as a single null (def_lvl=1).
+                var col_writer = rg_writer.NextColumn();
+                const offs = offset: c_ptrConst(int);
+                const elemSz = arrowElemSize(kind);
+                for r in i..#batchSize {
+                  const segStart = offs[r];
+                  const segEnd = if r == colRows - 1 then numVals
+                                                     else offs[r+1];
+                  const segSize = segEnd - segStart;
+                  if segSize > 0 {
+                    var defLvls: [0..#segSize] int(16) = 3;
+                    var repLvls: [0..#segSize] int(16);
+                    for s in 0..#segSize do repLvls[s] = (s != 0): int(16);
+                    const valPtr =
+                        ((data: c_ptrConst(uint(8))) +
+                         segStart*elemSz): c_ptrConst(void);
+                    col_writer.WriteBatch(valPtr, c_ptrTo(defLvls),
+                                          c_ptrTo(repLvls), segSize);
+                  } else {
+                    var defLvl: int(16) = 1;
+                    var repLvl: int(16) = 0;
+                    col_writer.WriteBatch(nil, c_ptrTo(defLvl),
+                                          c_ptrTo(repLvl), 1);
+                  }
+                }
+              } else if kind == ARROWINT64 || kind == ARROWUINT64 ||
                  kind == ARROWBOOLEAN || kind == ARROWDOUBLE {
                 var col_writer = rg_writer.NextColumn();
                 col_writer.WriteBatch(data, nil, nil, batchSize);
@@ -815,8 +934,8 @@ module Parquet {
                 var def_level = 1;
 
                 var strs = data:c_ptrConst(string);
-                for i in 0..#batchSize {
-                  const ref str = strs[i];
+                for j in 0..#batchSize {
+                  const ref str = strs[j];
                   col_writer.WriteString(str.size, str.c_str(), c_ptrTo(def_level), nil);
                 }
               }
@@ -827,6 +946,13 @@ module Parquet {
         }
       }
     }
+  }
+
+  // Byte size of the primitive value type backing an Arrow column, used to
+  // offset into a SegArray's flat value buffer during writes.
+  private proc arrowElemSize(kind: int): int {
+    if kind == ARROWBOOLEAN then return 1;
+    return 8;
   }
 
   proc writeTable(filename, colNames, const Arrs...) {
