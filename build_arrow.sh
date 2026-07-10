@@ -4,7 +4,7 @@ set -e
 
 CWD=$(cd $(dirname $0); pwd)
 
-ARROW_VERSION=${ARROW_VERSION:-"24.0.0"}
+ARROW_VERSION=${ARROW_VERSION:-"25.0.0"}
 NUM_CORES=${NUM_CORES:-1}
 
 ARROW_URL="https://github.com/apache/arrow/archive/refs/tags/apache-arrow-$ARROW_VERSION.tar.gz"

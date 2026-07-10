@@ -10,5 +10,5 @@ copyrightYear = "2026"
 
 [dependencies]
 [system]
-arrow = "24.0.0"
-parquet = "24.0.0"
+arrow = "25.0.0"
+parquet = "25.0.0"

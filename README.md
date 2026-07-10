@@ -18,7 +18,7 @@ both local and distributed (Block-distributed) arrays.
 ## Requirements
 
 - Chapel 2.8.0 or later
-- Apache Arrow and Parquet C++ libraries (24.0.0 or compatible)
+- Apache Arrow and Parquet C++ libraries (25.0.0 or compatible)
 
 The C++ prerequisite libraries must be instaled and findable by `pkg-config`. The packages are typically named `arrow` and `parquet`. On Ubuntu, you can install them with:
 
