@@ -1005,9 +1005,11 @@ module Parquet {
     proc ref registerSegArrayColumn(const segments: [] int,
                                     const values: [] ?eltType,
                                     colName: string) {
-      if eltType == string then
-        compilerError("String SegArray columns are not supported by " +
-                      "registerSegArrayColumn; use writeStrListColumn instead.");
+      if eltType != int(64) && eltType != uint(64) &&
+         eltType != real && eltType != bool then
+        compilerError("registerSegArrayColumn supports int(64), uint(64), " +
+                      "real, and bool value types (string SegArrays use " +
+                      "writeStrListColumn); got ", eltType:string);
 
       const c_dtype = chplTypeToCType(eltType);
 
