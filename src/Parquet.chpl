@@ -35,14 +35,10 @@ module Parquet {
   extern const ARROWDECIMAL: c_int;
   extern const ARROWERROR: c_int;
 
-  // Object-type codes shared with the C++ backend (see SharedEnums / the
-  // #define values in the Parquet C++ headers). These select how a column is
-  // laid out in the Parquet schema: PDARRAY writes a flat primitive column,
-  // while SEGARRAY writes a nested Arrow LIST column.
-  const ARRAYVIEW_OBJ: int = 0;
-  const PDARRAY_OBJ: int = 1;
-  const STRINGS_OBJ: int = 2;
-  const SEGARRAY_OBJ: int = 3;
+  extern const ARRAYVIEW: c_int;
+  extern const PDARRAY: c_int;
+  extern const STRINGS: c_int;
+  extern const SEGARRAY: c_int;
 
   class FileWriter {
     var _wrapper : c_ptr(void);
@@ -987,7 +983,7 @@ module Parquet {
                                         nil,
                                         nil,
                                         chplTypeToCType(eltType),
-                                        PDARRAY_OBJ,
+                                        PDARRAY,
                                         localSubDom.size,
                                         localSubDom.size,
                                         0));
@@ -1037,7 +1033,7 @@ module Parquet {
 
           var valPtr: c_ptrConst(void) = nil;
           if valDom.size > 0 then
-            valPtr = c_pointer_return_const(values[valDom.first]): c_ptrConst(void);
+            valPtr = c_addrOfConst(values[valDom.first]): c_ptrConst(void);
 
           localInfo.pushBack(
               new pqWriteLocalChunkInfo(colName.localize().c_str(),
@@ -1045,7 +1041,7 @@ module Parquet {
                                         segPtr,
                                         nil,
                                         c_dtype,
-                                        SEGARRAY_OBJ,
+                                        SEGARRAY,
                                         segDom.size,
                                         valDom.size,
                                         0));
@@ -1114,7 +1110,7 @@ module Parquet {
 
           var valPtr: c_ptrConst(void) = nil;
           if numByteVals > 0 then
-            valPtr = c_pointer_return_const(values[valDom.first]): c_ptrConst(void);
+            valPtr = c_ptrToConst(values[valDom.first]): c_ptrConst(void);
 
           localInfo.pushBack(
               new pqWriteLocalChunkInfo(colName.localize().c_str(),
@@ -1122,7 +1118,7 @@ module Parquet {
                                         segPtr,
                                         byteOffPtr,
                                         ARROWSTRING,
-                                        SEGARRAY_OBJ,
+                                        SEGARRAY,
                                         segDom.size,
                                         numStrings,
                                         numByteVals));
@@ -1193,7 +1189,7 @@ module Parquet {
                  colRows) in
                 zip(c_datas, c_offsets, c_byteOffsets, c_types, c_objTypes,
                     c_numValues, c_numBytes, sizes) {
-              if objType == SEGARRAY_OBJ && kind == ARROWSTRING {
+              if objType == SEGARRAY && kind == ARROWSTRING {
                 // Nested LIST-of-strings column. Each list's strings use
                 // def_lvl=3, with rep_lvl=0 for the first string and rep_lvl=1
                 // for the rest. Empty lists are a single null (def_lvl=1).
@@ -1212,20 +1208,20 @@ module Parquet {
                       const bEnd = if k == numVals - 1 then numByte
                                                        else byteOffs[k+1];
                       const slen = bEnd - bStart - 1;  // drop null terminator
-                      var defLvl: int(16) = 3;
-                      var repLvl: int(16) = (k != strStart): int(16);
+                      const defLvl: int(16) = 3;
+                      const repLvl: int(16) = (k != strStart): int(16);
                       const cstr = (valBytes + bStart): c_ptrConst(uint(8));
-                      col_writer.WriteString(slen, cstr, c_ptrTo(defLvl),
-                                             c_ptrTo(repLvl));
+                      col_writer.WriteString(slen, cstr, c_ptrToConst(defLvl),
+                                             c_ptrToConst(repLvl));
                     }
                   } else {
-                    var defLvl: int(16) = 1;
-                    var repLvl: int(16) = 0;
-                    col_writer.WriteString(0, nil, c_ptrTo(defLvl),
-                                           c_ptrTo(repLvl));
+                    const defLvl: int(16) = 1;
+                    const repLvl: int(16) = 0;
+                    col_writer.WriteString(0, nil, c_ptrToConst(defLvl),
+                                           c_ptrToConst(repLvl));
                   }
                 }
-              } else if objType == SEGARRAY_OBJ {
+              } else if objType == SEGARRAY {
                 // Nested LIST column: write one list (segment) at a time using
                 // Arrow definition/repetition levels. def_lvl=3 marks a defined
                 // item; rep_lvl=0 starts a new list and rep_lvl=1 continues it.
@@ -1239,19 +1235,18 @@ module Parquet {
                                                      else offs[r+1];
                   const segSize = segEnd - segStart;
                   if segSize > 0 {
-                    var defLvls: [0..#segSize] int(16) = 3;
-                    var repLvls: [0..#segSize] int(16);
-                    for s in 0..#segSize do repLvls[s] = (s != 0): int(16);
+                    const defLvls: [0..#segSize] int(16) = 3;
+                    const repLvls = for s in 0..#segSize do (s != 0): int(16);
                     const valPtr =
                         ((data: c_ptrConst(uint(8))) +
                          segStart*elemSz): c_ptrConst(void);
-                    col_writer.WriteBatch(valPtr, c_ptrTo(defLvls),
-                                          c_ptrTo(repLvls), segSize);
+                    col_writer.WriteBatch(valPtr, c_ptrToConst(defLvls),
+                                          c_ptrToConst(repLvls), segSize);
                   } else {
-                    var defLvl: int(16) = 1;
-                    var repLvl: int(16) = 0;
-                    col_writer.WriteBatch(nil, c_ptrTo(defLvl),
-                                          c_ptrTo(repLvl), 1);
+                    const defLvl: int(16) = 1;
+                    const repLvl: int(16) = 0;
+                    col_writer.WriteBatch(nil, c_ptrToConst(defLvl),
+                                          c_ptrToConst(repLvl), 1);
                   }
                 }
               } else if kind == ARROWINT64 || kind == ARROWUINT64 ||
@@ -1260,12 +1255,12 @@ module Parquet {
                 col_writer.WriteBatch(data, nil, nil, batchSize);
               } else if kind == ARROWSTRING {
                 var col_writer = rg_writer.NextColumn();
-                var def_level = 1;
+                const def_level = 1;
 
                 var strs = data:c_ptrConst(string);
                 for j in 0..#batchSize {
                   const ref str = strs[j];
-                  col_writer.WriteString(str.size, str.c_str(), c_ptrTo(def_level), nil);
+                  col_writer.WriteString(str.size, str.c_str(), c_ptrToConst(def_level), nil);
                 }
               }
             }

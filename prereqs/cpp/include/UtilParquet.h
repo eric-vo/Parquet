@@ -42,7 +42,7 @@ extern "C" {
 #define ARROWDECIMAL 9
 #define ARROWERROR -1
 
-#define ARRAYVIEW 0 // not currently used, but included for continuity with Chapel
+#define ARRAYVIEW 0
 #define PDARRAY 1
 #define STRINGS 2
 #define SEGARRAY 3
